@@ -18,8 +18,10 @@ echo "==> [2/5] Push to remote"
 git push "$REMOTE" "$BRANCH"
 
 echo "==> [3/5] Deploy on server"
-ssh "$SERVER" <<EOF
+ssh -i ~/.ssh/id_ed25519 "$SERVER" <<EOF
 set -euo pipefail
+
+
 
 APP_ROOT="$APP_ROOT"
 WEB_DIR="$WEB_DIR"
