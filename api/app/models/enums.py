@@ -1,0 +1,45 @@
+from enum import Enum
+
+
+class UserRole(str, Enum):
+    USER = "USER"
+    ADMIN = "ADMIN"
+
+
+class TaskStatus(str, Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
+class LedgerType(str, Enum):
+    TOPUP = "TOPUP"
+    FREEZE = "FREEZE"
+    CAPTURE = "CAPTURE"
+    RELEASE = "RELEASE"
+    REFUND = "REFUND"
+    ARREARS_INCUR = "ARREARS_INCUR"
+    ARREARS_SETTLE = "ARREARS_SETTLE"
+
+
+class ImageSize(str, Enum):
+    S256 = "256x256"
+    S512 = "512x512"
+    S1024 = "1024x1024"
+    P1024x1792 = "1024x1792"
+    P1024x1536 = "1024x1536"
+    L1536x1024 = "1536x1024"
+    L1792x1024 = "1792x1024"
+
+
+class ImageQuality(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class ImageFormat(str, Enum):
+    WEBP = "webp"
+    PNG = "png"
+    JPEG = "jpeg"

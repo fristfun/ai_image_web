@@ -1,0 +1,184 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { getAccessToken } from "@/lib/auth";
+import { apiFetch } from "@/lib/api";
+
+type VariableItem = {
+  id: string;
+  name: string;
+  description: string;
+  example_value: string;
+};
+
+const templateSizes = ["256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "1024x1792", "1792x1024"] as const;
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+function resolveImageUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
+export default function AdminTemplateNewPage() {
+  const [category, setCategory] = useState("");
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [effectImageUrl, setEffectImageUrl] = useState("");
+  const [defaultSize, setDefaultSize] = useState<(typeof templateSizes)[number]>("1024x1024");
+  const [defaultQuality, setDefaultQuality] = useState<"low" | "medium" | "high">("medium");
+  const [variables, setVariables] = useState<VariableItem[]>([{ id: crypto.randomUUID(), name: "", description: "", example_value: "" }]);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  function updateVariable(index: number, key: keyof VariableItem, value: string) {
+    setVariables((prev) => prev.map((item, idx) => (idx === index ? { ...item, [key]: value } : item)));
+  }
+
+  async function onUploadEffectImage(file: File | null) {
+    if (!file) return;
+    setError("");
+    setUploading(true);
+    try {
+      const token = getAccessToken();
+      if (!token) throw new Error("请先登录管理员账号");
+      const form = new FormData();
+      form.append("file", file);
+      const data = await apiFetch<{ effect_image_url: string }>("/api/v1/admin/templates/upload-effect-image", {
+        method: "POST",
+        token,
+        body: form
+      });
+      setEffectImageUrl(data.effect_image_url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "上传失败");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    try {
+      const token = getAccessToken();
+      if (!token) {
+        throw new Error("请先登录管理员账号");
+      }
+      await apiFetch<{ id: number }>("/api/v1/admin/templates", {
+        method: "POST",
+        token,
+        body: JSON.stringify({
+          category,
+          title,
+          content,
+          effect_image_url: effectImageUrl,
+          default_size: defaultSize,
+          default_quality: defaultQuality,
+          variables: variables.filter((item) => item.name && item.description)
+        })
+      });
+      setSuccess("模板创建成功");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "创建失败");
+    }
+  }
+
+  return (
+    <section className="card space-y-3">
+      <h1 className="text-xl font-semibold">新建模板</h1>
+      <form className="space-y-3" onSubmit={onSubmit}>
+        <input className="w-full rounded-md border p-2" placeholder="分类" value={category} onChange={(event) => setCategory(event.target.value)} />
+        <input className="w-full rounded-md border p-2" placeholder="标题" value={title} onChange={(event) => setTitle(event.target.value)} />
+        <textarea
+          className="w-full rounded-md border p-2"
+          placeholder="模板内容"
+          rows={6}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+        />
+        <input
+          className="w-full rounded-md border p-2"
+          placeholder="效果图 URL（可选，可手动填）"
+          value={effectImageUrl}
+          onChange={(event) => setEffectImageUrl(event.target.value)}
+        />
+        <div className="space-y-2">
+          <label className="block text-sm text-slate-600">上传效果图</label>
+          <input
+            accept=".jpg,.jpeg,.png,.webp"
+            className="w-full rounded-md border p-2"
+            type="file"
+            onChange={(event) => void onUploadEffectImage(event.target.files?.[0] ?? null)}
+          />
+          {uploading ? <p className="text-xs text-slate-500">上传中...</p> : null}
+          {effectImageUrl ? (
+            <img alt="效果图预览" className="max-h-48 rounded border object-contain" src={resolveImageUrl(effectImageUrl)} />
+          ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            className="w-full rounded-md border p-2"
+            value={defaultSize}
+            onChange={(event) => setDefaultSize(event.target.value as (typeof templateSizes)[number])}
+          >
+            {templateSizes.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <select
+            className="w-full rounded-md border p-2"
+            value={defaultQuality}
+            onChange={(event) => setDefaultQuality(event.target.value as "low" | "medium" | "high")}
+          >
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <p className="text-sm font-medium">变量说明</p>
+          {variables.map((item, index) => (
+            <div className="grid grid-cols-3 gap-2" key={item.id}>
+              <input
+                className="rounded-md border p-2"
+                placeholder="变量名"
+                value={item.name}
+                onChange={(event) => updateVariable(index, "name", event.target.value)}
+              />
+              <input
+                className="rounded-md border p-2"
+                placeholder="变量说明"
+                value={item.description}
+                onChange={(event) => updateVariable(index, "description", event.target.value)}
+              />
+              <input
+                className="rounded-md border p-2"
+                placeholder="示例值"
+                value={item.example_value}
+                onChange={(event) => updateVariable(index, "example_value", event.target.value)}
+              />
+            </div>
+          ))}
+          <button
+            className="rounded border px-3 py-1 text-sm"
+            type="button"
+            onClick={() => setVariables((prev) => [...prev, { id: crypto.randomUUID(), name: "", description: "", example_value: "" }])}
+          >
+            添加变量
+          </button>
+        </div>
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {success ? <p className="text-sm text-green-700">{success}</p> : null}
+        <button className="rounded-md bg-slate-900 px-4 py-2 text-white" type="submit">
+          保存模板
+        </button>
+      </form>
+    </section>
+  );
+}
