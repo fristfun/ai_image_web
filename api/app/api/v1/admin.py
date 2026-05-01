@@ -9,8 +9,11 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
+from app.core.billing_rules import BILLING_RULES_KEY, parse_billing_rules, serialize_billing_rules
 from app.core.database import get_db
 from app.core.errors import ApiError
+from app.core.image_sizes import IMAGE_SIZE_OPTIONS_KEY, parse_image_size_options, serialize_image_size_options
+from app.core.openai_config import OPENAI_API_KEY_SETTING_KEY, mask_api_key
 from app.models.enums import LedgerType, TaskStatus
 from app.models.generation_task import GenerationTask
 from app.models.order import Order
@@ -330,7 +333,7 @@ def list_generations(
                 "user_email": user_email,
                 "status": task.status.value,
                 "prompt": task.prompt,
-                "size": task.size.value,
+                "size": task.size,
                 "quality": task.quality.value,
                 "format": task.output_format.value,
                 "price_points": task.price_points,
@@ -375,7 +378,7 @@ def export_generations_csv(
                 x.id,
                 x.user_id,
                 x.status.value,
-                x.size.value,
+                x.size,
                 x.quality.value,
                 x.output_format.value,
                 x.price_points,
@@ -556,6 +559,66 @@ def update_generate_hint_setting(payload: dict, _: User = Depends(require_admin)
         row.setting_value = hint_text
     db.commit()
     return {"ok": True}
+
+
+@router.get("/settings/image-sizes")
+def get_image_size_options(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.query(SiteSetting).filter(SiteSetting.setting_key == IMAGE_SIZE_OPTIONS_KEY).first()
+    return {"options": parse_image_size_options(row.setting_value if row else None)}
+
+
+@router.put("/settings/image-sizes")
+def update_image_size_options(payload: dict, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    setting_value = serialize_image_size_options(payload.get("options"))
+    row = db.query(SiteSetting).filter(SiteSetting.setting_key == IMAGE_SIZE_OPTIONS_KEY).first()
+    if row is None:
+        row = SiteSetting(setting_key=IMAGE_SIZE_OPTIONS_KEY, setting_value=setting_value)
+        db.add(row)
+    else:
+        row.setting_value = setting_value
+    db.commit()
+    return {"ok": True, "options": parse_image_size_options(setting_value)}
+
+
+@router.get("/settings/billing-rules")
+def get_billing_rules_setting(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.query(SiteSetting).filter(SiteSetting.setting_key == BILLING_RULES_KEY).first()
+    return {"rules": parse_billing_rules(row.setting_value if row else None)}
+
+
+@router.put("/settings/billing-rules")
+def update_billing_rules_setting(payload: dict, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    setting_value = serialize_billing_rules(payload.get("rules"))
+    row = db.query(SiteSetting).filter(SiteSetting.setting_key == BILLING_RULES_KEY).first()
+    if row is None:
+        row = SiteSetting(setting_key=BILLING_RULES_KEY, setting_value=setting_value)
+        db.add(row)
+    else:
+        row.setting_value = setting_value
+    db.commit()
+    return {"ok": True, "rules": parse_billing_rules(setting_value)}
+
+
+@router.get("/settings/openai-api-key")
+def get_openai_api_key_setting(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.query(SiteSetting).filter(SiteSetting.setting_key == OPENAI_API_KEY_SETTING_KEY).first()
+    value = row.setting_value if row else ""
+    return {"has_api_key": bool(value.strip()), "masked_api_key": mask_api_key(value)}
+
+
+@router.put("/settings/openai-api-key")
+def update_openai_api_key_setting(payload: dict, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    api_key = str(payload.get("api_key", "")).strip()
+    if not api_key:
+        raise ApiError(code="INVALID_OPENAI_API_KEY", message="OpenAI API Key 不能为空", status_code=422)
+    row = db.query(SiteSetting).filter(SiteSetting.setting_key == OPENAI_API_KEY_SETTING_KEY).first()
+    if row is None:
+        row = SiteSetting(setting_key=OPENAI_API_KEY_SETTING_KEY, setting_value=api_key)
+        db.add(row)
+    else:
+        row.setting_value = api_key
+    db.commit()
+    return {"ok": True, "has_api_key": True, "masked_api_key": mask_api_key(api_key)}
 
 
 @router.get("/settings/wechat-topup-qr")

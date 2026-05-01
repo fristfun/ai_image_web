@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-SizeLiteral = Literal["256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "1024x1792", "1792x1024"]
+SizeLiteral = str
 QualityLiteral = Literal["low", "medium", "high"]
 FormatLiteral = Literal["webp", "png", "jpeg"]
 

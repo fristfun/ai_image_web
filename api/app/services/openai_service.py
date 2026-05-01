@@ -5,8 +5,6 @@ from openai import OpenAI
 
 from app.core.config import settings
 
-client = OpenAI(api_key=settings.openai_api_key)
-
 
 @dataclass
 class ImageGenerationResult:
@@ -38,7 +36,12 @@ def _parse_usage(result) -> tuple[int, int, int, int]:
     return input_text_tokens, input_image_tokens, output_text_tokens, output_image_tokens
 
 
-def generate_image(prompt: str, size: str, quality: str, output_format: str, model: str) -> ImageGenerationResult:
+def _client(api_key: str | None = None) -> OpenAI:
+    return OpenAI(api_key=(api_key or settings.openai_api_key).strip())
+
+
+def generate_image(prompt: str, size: str, quality: str, output_format: str, model: str, api_key: str | None = None) -> ImageGenerationResult:
+    client = _client(api_key)
     result = client.images.generate(
         model=model,
         prompt=prompt,
@@ -58,8 +61,15 @@ def generate_image(prompt: str, size: str, quality: str, output_format: str, mod
 
 
 def edit_image(
-    prompt: str, image_files: list[tuple[str, bytes, str]], size: str, quality: str, output_format: str, model: str
+    prompt: str,
+    image_files: list[tuple[str, bytes, str]],
+    size: str,
+    quality: str,
+    output_format: str,
+    model: str,
+    api_key: str | None = None,
 ) -> ImageGenerationResult:
+    client = _client(api_key)
     image_payload = []
     for filename, binary, mime_type in image_files:
         image_payload.append((filename, binary, mime_type))

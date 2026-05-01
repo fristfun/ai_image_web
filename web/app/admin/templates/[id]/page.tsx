@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getAccessToken } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import { defaultImageSizeOptions, normalizeImageSizeOptions, type ImageSizeOption } from "@/lib/imageSizes";
 
 type VariableItem = {
   id: string;
@@ -46,6 +47,7 @@ export default function AdminTemplateEditPage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [effectImageUrl, setEffectImageUrl] = useState("");
+  const [sizeOptions, setSizeOptions] = useState<ImageSizeOption[]>(defaultImageSizeOptions);
   const [defaultSize, setDefaultSize] = useState("1024x1024");
   const [defaultQuality, setDefaultQuality] = useState<"low" | "medium" | "high">("medium");
   const [variables, setVariables] = useState<VariableItem[]>([{ id: crypto.randomUUID(), name: "", description: "", example_value: "" }]);
@@ -80,6 +82,20 @@ export default function AdminTemplateEditPage() {
     }
     void loadTemplate();
   }, [templateId]);
+
+  useEffect(() => {
+    async function loadImageSizes() {
+      try {
+        const token = getAccessToken();
+        if (!token) return;
+        const data = await apiFetch<{ options: ImageSizeOption[] }>("/api/v1/admin/settings/image-sizes", { token });
+        setSizeOptions(normalizeImageSizeOptions(data.options));
+      } catch {
+        setSizeOptions(defaultImageSizeOptions);
+      }
+    }
+    void loadImageSizes();
+  }, []);
 
   function updateVariable(index: number, key: keyof VariableItem, value: string) {
     setVariables((prev) => prev.map((item, idx) => (idx === index ? { ...item, [key]: value } : item)));
@@ -170,12 +186,17 @@ export default function AdminTemplateEditPage() {
           ) : null}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <input
+          <select
             className="w-full rounded-md border p-2"
-            placeholder="默认尺寸"
             value={defaultSize}
             onChange={(event) => setDefaultSize(event.target.value)}
-          />
+          >
+            {sizeOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
           <select
             className="w-full rounded-md border p-2"
             value={defaultQuality}

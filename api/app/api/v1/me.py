@@ -67,7 +67,7 @@ def my_generations(user: User = Depends(get_current_user), db: Session = Depends
         {
             "id": task.id,
             "prompt": task.prompt,
-            "size": task.size.value,
+            "size": task.size,
             "quality": task.quality.value,
             "format": task.output_format.value,
             "status": task.status.value,

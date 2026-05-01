@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { getAccessToken } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import { defaultImageSizeOptions, normalizeImageSizeOptions, type ImageSizeOption } from "@/lib/imageSizes";
 
 type VariableItem = {
   id: string;
@@ -10,8 +11,6 @@ type VariableItem = {
   description: string;
   example_value: string;
 };
-
-const templateSizes = ["256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "1024x1792", "1792x1024"] as const;
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -26,12 +25,29 @@ export default function AdminTemplateNewPage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [effectImageUrl, setEffectImageUrl] = useState("");
-  const [defaultSize, setDefaultSize] = useState<(typeof templateSizes)[number]>("1024x1024");
+  const [sizeOptions, setSizeOptions] = useState<ImageSizeOption[]>(defaultImageSizeOptions);
+  const [defaultSize, setDefaultSize] = useState("auto");
   const [defaultQuality, setDefaultQuality] = useState<"low" | "medium" | "high">("medium");
   const [variables, setVariables] = useState<VariableItem[]>([{ id: crypto.randomUUID(), name: "", description: "", example_value: "" }]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    async function loadImageSizes() {
+      try {
+        const token = getAccessToken();
+        if (!token) return;
+        const data = await apiFetch<{ options: ImageSizeOption[] }>("/api/v1/admin/settings/image-sizes", { token });
+        const options = normalizeImageSizeOptions(data.options);
+        setSizeOptions(options);
+        setDefaultSize((current) => (options.some((item) => item.value === current) ? current : options[0]?.value ?? "auto"));
+      } catch {
+        setSizeOptions(defaultImageSizeOptions);
+      }
+    }
+    void loadImageSizes();
+  }, []);
 
   function updateVariable(index: number, key: keyof VariableItem, value: string) {
     setVariables((prev) => prev.map((item, idx) => (idx === index ? { ...item, [key]: value } : item)));
@@ -123,11 +139,11 @@ export default function AdminTemplateNewPage() {
           <select
             className="w-full rounded-md border p-2"
             value={defaultSize}
-            onChange={(event) => setDefaultSize(event.target.value as (typeof templateSizes)[number])}
+            onChange={(event) => setDefaultSize(event.target.value)}
           >
-            {templateSizes.map((item) => (
-              <option key={item} value={item}>
-                {item}
+            {sizeOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
               </option>
             ))}
           </select>

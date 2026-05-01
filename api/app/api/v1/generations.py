@@ -16,12 +16,16 @@ from openai import (
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.billing_rules import BILLING_RULES_KEY, parse_billing_rules
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
-from app.models.enums import ImageFormat, ImageQuality, ImageSize, TaskStatus
+from app.core.image_sizes import IMAGE_SIZE_OPTIONS_KEY, allowed_image_size_values
+from app.core.openai_config import OPENAI_API_KEY_SETTING_KEY, resolve_openai_api_key
+from app.models.enums import ImageFormat, ImageQuality, TaskStatus
 from app.models.generated_image import GeneratedImage
 from app.models.generation_task import GenerationTask
+from app.models.site_setting import SiteSetting
 from app.models.uploaded_asset import UploadedAsset
 from app.models.user import User
 from app.models.wallet_hold import WalletHold
@@ -39,6 +43,8 @@ ALLOWED_IMAGE_MODELS = {item.strip() for item in settings.image_model_allowlist.
 
 
 def parse_size(size: str) -> tuple[int, int]:
+    if size == "auto":
+        return 0, 0
     width, height = size.split("x")
     return int(width), int(height)
 
@@ -90,7 +96,9 @@ async def create_generation(
 ):
     if len(reference_images) > 5:
         raise ApiError(code="TOO_MANY_REFERENCES", message="参考图最多 5 张")
-    if size not in {"256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "1024x1792", "1792x1024"}:
+    size_setting = db.query(SiteSetting).filter(SiteSetting.setting_key == IMAGE_SIZE_OPTIONS_KEY).first()
+    allowed_sizes = allowed_image_size_values(size_setting.setting_value if size_setting else None)
+    if size not in allowed_sizes:
         raise ApiError(code="INVALID_SIZE", message="尺寸无效")
     if quality not in {"low", "medium", "high"}:
         raise ApiError(code="INVALID_QUALITY", message="质量无效")
@@ -105,11 +113,15 @@ async def create_generation(
             status_code=402,
         )
 
-    price = calculate_price(size=size, quality=quality)
+    billing_setting = db.query(SiteSetting).filter(SiteSetting.setting_key == BILLING_RULES_KEY).first()
+    billing_rules = parse_billing_rules(billing_setting.setting_value if billing_setting else None)
+    api_key_setting = db.query(SiteSetting).filter(SiteSetting.setting_key == OPENAI_API_KEY_SETTING_KEY).first()
+    openai_api_key = resolve_openai_api_key(api_key_setting.setting_value if api_key_setting else None)
+    price = calculate_price(size=size, quality=quality, rules=billing_rules)
     task = GenerationTask(
         user_id=user.id,
         prompt=prompt,
-        size=ImageSize(size),
+        size=size,
         quality=ImageQuality(quality),
         output_format=ImageFormat(output_format),
         status=TaskStatus.PENDING,
@@ -143,18 +155,27 @@ async def create_generation(
             )
 
         if image_payload:
-            generated = edit_image(prompt, image_payload, size=size, quality=quality, output_format=output_format, model=model)
+            generated = edit_image(
+                prompt,
+                image_payload,
+                size=size,
+                quality=quality,
+                output_format=output_format,
+                model=model,
+                api_key=openai_api_key,
+            )
         else:
-            generated = generate_image(prompt, size=size, quality=quality, output_format=output_format, model=model)
+            generated = generate_image(prompt, size=size, quality=quality, output_format=output_format, model=model, api_key=openai_api_key)
 
         usage_cost_usd = calculate_usage_cost_usd(
             input_text_tokens=generated.input_text_tokens,
             input_image_tokens=generated.input_image_tokens,
             output_text_tokens=generated.output_text_tokens,
             output_image_tokens=generated.output_image_tokens,
+            rules=billing_rules,
         )
-        actual_cost_usd = usage_cost_usd if usage_cost_usd > 0 else estimate_usd_price(size=size, quality=quality)
-        actual_points = points_from_usd(actual_cost_usd)
+        actual_cost_usd = usage_cost_usd if usage_cost_usd > 0 else estimate_usd_price(size=size, quality=quality, rules=billing_rules)
+        actual_points = points_from_usd(actual_cost_usd, rules=billing_rules)
         task.price_points = actual_points
         task.actual_cost_usd = actual_cost_usd
 

@@ -4,8 +4,9 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getAccessToken } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import { defaultBillingRules, estimatePoints, normalizeBillingRules, type BillingRules } from "@/lib/billingRules";
+import { defaultImageSizeOptions, normalizeImageSizeOptions, type ImageSizeOption } from "@/lib/imageSizes";
 
-const sizes = ["256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "1024x1792", "1792x1024"] as const;
 const qualities = ["low", "medium", "high"] as const;
 const formats = ["webp", "png", "jpeg"] as const;
 const imageModels = ["gpt-image-2"] as const;
@@ -71,29 +72,6 @@ function isPromptTagSegment(segment: string): boolean {
   return /^\{[^{}]+\}$/.test(segment);
 }
 
-const usdPriceTable: Record<string, number> = {
-  "256x256|low": 0.01,
-  "256x256|medium": 0.01,
-  "256x256|high": 0.02,
-  "512x512|low": 0.03,
-  "512x512|medium": 0.05,
-  "512x512|high": 0.08,
-  "1024x1024|low": 0.1,
-  "1024x1024|medium": 0.2,
-  "1024x1024|high": 0.3,
-  "1024x1536|low": 0.15,
-  "1024x1536|medium": 0.25,
-  "1024x1536|high": 0.35,
-  "1024x1792|low": 0.18,
-  "1024x1792|medium": 0.3,
-  "1024x1792|high": 0.42,
-  "1536x1024|low": 0.15,
-  "1536x1024|medium": 0.25,
-  "1536x1024|high": 0.35,
-  "1792x1024|low": 0.18,
-  "1792x1024|medium": 0.3,
-  "1792x1024|high": 0.42
-};
 const qualityLabelMap: Record<(typeof qualities)[number], string> = {
   low: "一般质量",
   medium: "中等质量",
@@ -104,7 +82,8 @@ export default function GeneratePage() {
   const searchParams = useSearchParams();
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [size, setSize] = useState<(typeof sizes)[number]>("1024x1024");
+  const [sizeOptions, setSizeOptions] = useState<ImageSizeOption[]>(defaultImageSizeOptions);
+  const [size, setSize] = useState("auto");
   const [quality, setQuality] = useState<(typeof qualities)[number]>("medium");
   const [format, setFormat] = useState<(typeof formats)[number]>("webp");
   const [model, setModel] = useState<(typeof imageModels)[number]>("gpt-image-2");
@@ -114,16 +93,17 @@ export default function GeneratePage() {
     () => Array.from({ length: REFERENCE_SLOT_COUNT }, () => null)
   );
   const [loading, setLoading] = useState(false);
+  const [generationSeconds, setGenerationSeconds] = useState(0);
   const [error, setError] = useState("");
   const [result, setResult] = useState<GenerateResponse | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [hintText, setHintText] = useState("");
-  const [billingMultiplier, setBillingMultiplier] = useState(10);
+  const [billingRules, setBillingRules] = useState<BillingRules>(defaultBillingRules);
   const [arrearsPoints, setArrearsPoints] = useState(0);
   const [templateTitle, setTemplateTitle] = useState("");
   const [templateVariables, setTemplateVariables] = useState<TemplateVariableInput[]>([]);
   const [promptTagInputs, setPromptTagInputs] = useState<PromptTagInput[]>([]);
-  const estimatedPoints = Math.round(usdPriceTable[`${size}|${quality}`] * billingMultiplier * 100);
+  const estimatedPoints = estimatePoints(size, quality, billingRules);
 
   function findTemplateVariableByTag(tagName: string): TemplateVariableInput | undefined {
     const normalizedTag = tagName.trim();
@@ -261,20 +241,35 @@ export default function GeneratePage() {
       try {
         const token = getAccessToken();
         if (!token) return;
-        const [hintData, walletData] = await Promise.all([
+        const [hintData, walletData, billingData] = await Promise.all([
           apiFetch<{ hint_text: string; billing_cost_multiplier?: number }>("/api/v1/settings/generate-hint", { token }),
           apiFetch<WalletBrief>("/api/v1/me/wallet?page=1&page_size=1", { token }),
+          apiFetch<{ rules: BillingRules }>("/api/v1/settings/billing-rules", { token }),
         ]);
         setHintText(hintData.hint_text ?? "");
-        if (typeof hintData.billing_cost_multiplier === "number" && hintData.billing_cost_multiplier > 0) {
-          setBillingMultiplier(hintData.billing_cost_multiplier);
-        }
+        setBillingRules(normalizeBillingRules(billingData.rules));
         setArrearsPoints(walletData.arrears_points ?? 0);
       } catch {
         // ignore failures to avoid blocking generation flow
       }
     }
     void loadHintAndWallet();
+  }, []);
+
+  useEffect(() => {
+    async function loadImageSizes() {
+      try {
+        const token = getAccessToken();
+        if (!token) return;
+        const data = await apiFetch<{ options: ImageSizeOption[] }>("/api/v1/settings/image-sizes", { token });
+        const options = normalizeImageSizeOptions(data.options);
+        setSizeOptions(options);
+        setSize((current) => (options.some((item) => item.value === current) ? current : options[0]?.value ?? "auto"));
+      } catch {
+        setSizeOptions(defaultImageSizeOptions);
+      }
+    }
+    void loadImageSizes();
   }, []);
 
   useEffect(() => {
@@ -300,8 +295,8 @@ export default function GeneratePage() {
               }))
             : []
         );
-        if (sizes.includes(data.default_size as (typeof sizes)[number])) {
-          setSize(data.default_size as (typeof sizes)[number]);
+        if (sizeOptions.some((item) => item.value === data.default_size)) {
+          setSize(data.default_size);
         }
         if (qualities.includes(data.default_quality as (typeof qualities)[number])) {
           setQuality(data.default_quality as (typeof qualities)[number]);
@@ -311,7 +306,7 @@ export default function GeneratePage() {
       }
     }
     void loadTemplateFromQuery();
-  }, [searchParams]);
+  }, [searchParams, sizeOptions]);
 
   useEffect(() => {
     const textarea = promptRef.current;
@@ -319,6 +314,17 @@ export default function GeneratePage() {
     textarea.style.height = "auto";
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [prompt]);
+
+  useEffect(() => {
+    if (!loading) {
+      return;
+    }
+    setGenerationSeconds(0);
+    const timer = window.setInterval(() => {
+      setGenerationSeconds((seconds) => seconds + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   function onReferenceChange(index: number, file: File | null) {
     setReferenceFiles((prev) => {
@@ -420,6 +426,12 @@ export default function GeneratePage() {
   const canAddReferenceSlot = displayedReferenceSlotCount < REFERENCE_SLOT_COUNT;
   const hasPrompt = prompt.trim().length > 0;
   const canGenerate = hasPrompt && arrearsPoints <= 0 && !loading;
+  const waitHint =
+    generationSeconds < 20
+      ? "图片正在生成，请保持页面打开"
+      : generationSeconds < 60
+        ? "高清图片可能需要更久一点，系统仍在处理中"
+        : "仍在等待服务返回结果，请不要重复提交";
   const stepStatus = [
     textTagInputs.length === 0 || textTagInputs.every((item) => item.value.trim()),
     true, // reference image is optional
@@ -621,9 +633,11 @@ export default function GeneratePage() {
         <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
           <p className="text-sm font-medium text-slate-800">步骤 4：选择尺寸、质量和输出格式</p>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <select className="rounded-md border bg-white p-2 text-sm text-slate-800" value={size} onChange={(event) => setSize(event.target.value as (typeof sizes)[number])}>
-              {sizes.map((size) => (
-                <option key={size}>{size}</option>
+            <select className="rounded-md border bg-white p-2 text-sm text-slate-800" value={size} onChange={(event) => setSize(event.target.value)}>
+              {sizeOptions.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
               ))}
             </select>
             <select
@@ -698,7 +712,40 @@ export default function GeneratePage() {
       </form>
       <div className="card">
         <h2 className="mb-2 text-base font-semibold text-slate-900">结果预览</h2>
-        {result ? (
+        {loading ? (
+          <div className="space-y-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-base font-semibold text-sky-950">正在生成图片</p>
+                <p className="mt-1 text-sky-700">{waitHint}</p>
+              </div>
+              <div className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-sky-800 shadow-sm">
+                已等待 {generationSeconds} 秒
+              </div>
+            </div>
+            <div className="relative h-3 overflow-hidden rounded-full bg-sky-100">
+              <div className="absolute inset-y-0 left-0 w-1/3 animate-[loading-bar_1.4s_ease-in-out_infinite] rounded-full bg-sky-500" />
+            </div>
+            <div className="grid grid-cols-1 gap-2 text-xs text-sky-700 sm:grid-cols-3">
+              <div className="rounded border border-sky-100 bg-white/70 p-2">正在提交参数与参考图</div>
+              <div className="rounded border border-sky-100 bg-white/70 p-2">模型生成中，请耐心等待</div>
+              <div className="rounded border border-sky-100 bg-white/70 p-2">完成后会自动展示结果</div>
+            </div>
+            <style jsx>{`
+              @keyframes loading-bar {
+                0% {
+                  transform: translateX(-110%);
+                }
+                50% {
+                  transform: translateX(110%);
+                }
+                100% {
+                  transform: translateX(330%);
+                }
+              }
+            `}</style>
+          </div>
+        ) : result ? (
           <div className="space-y-2 text-sm text-slate-700">
             <p>任务 ID: {result.task_id}</p>
             <p>状态: {result.status}</p>
